@@ -2,6 +2,7 @@
 import time
 import json
 import jwt
+from typing import cast
 from pathlib import Path
 
 from datetime import datetime, timedelta, UTC
@@ -32,6 +33,7 @@ def register(show_spinner=False) -> str | None:
   entirely.
   """
   params = Params()
+
   dongle_id: str | None = params.get("DongleId")
   if dongle_id is None and Path(Paths.persist_root()+"/comma/dongle_id").is_file():
     # not all devices will have this; added early in comma 3X production (2/28/24)
@@ -68,26 +70,20 @@ def register(show_spinner=False) -> str | None:
     start_time = time.monotonic()
     while True:
       try:
-        register_token = jwt.encode({'register': True, 'exp': datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)}, private_key, algorithm=jwt_algo)
+        register_token = jwt.encode({'register': True, 'exp': datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)},
+                                    cast(str, private_key), algorithm=jwt_algo)
+        cloudlog.info("getting pilotauth")
         cloudlog.info("getting pilotauth")
         resp = api_get("v2/pilotauth/", method='POST', timeout=15,
-                       imei=imei1, imei2=imei2, serial=serial)
+                       imei=imei1, imei2=imei2, serial=serial, public_key=public_key, register_token=register_token)
 
-        # ========== 【唯一修改处】==========
         if resp.status_code in (402, 403):
-          cloudlog.info(f"Unable to register device, got {resp.status_code}, retrying...")
+          cloudlog.info(f"Unable to register device, got {resp.status_code}")
           dongle_id = UNREGISTERED_DONGLE_ID
-          if show_spinner:
-            spinner.update(f"registering device - serial: {serial}, contact MR.ONE")
-          time.sleep(2)  # 避免请求过快
-          continue  # 继续下一次注册尝试
-        # =====================================
-
         else:
           dongleauth = json.loads(resp.text)
           dongle_id = dongleauth["dongle_id"]
         break
-
       except Exception:
         cloudlog.exception("failed to authenticate")
         backoff = min(backoff + 1, 15)
@@ -102,7 +98,7 @@ def register(show_spinner=False) -> str | None:
 
   if dongle_id:
     params.put("DongleId", dongle_id)
-    #set_offroad_alert("Offroad_UnregisteredHardware", (dongle_id == UNREGISTERED_DONGLE_ID) and not PC)
+    set_offroad_alert("Offroad_UnregisteredHardware", (dongle_id == UNREGISTERED_DONGLE_ID) and not PC)
   return dongle_id
 
 
